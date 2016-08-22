@@ -1,0 +1,23 @@
+{
+  "name": "photo-archiver",
+  "version": "1.0.0",
+  "description": "Archives all photos on my Mac",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahw/photo-archiver.git"
+  },
+  "author": "ahw",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/ahw/photo-archiver/issues"
+  },
+  "homepage": "https://github.com/ahw/photo-archiver#readme",
+  "dependencies": {
+    "aws-sdk": "^2.5.2",
+    "s3": "^4.4.0"
+  }
+}
