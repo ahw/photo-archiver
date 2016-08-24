@@ -17,7 +17,11 @@
   },
   "homepage": "https://github.com/ahw/photo-archiver#readme",
   "dependencies": {
+    "async": "^2.0.1",
     "aws-sdk": "^2.5.2",
+    "exif": "^0.6.0",
+    "exif-date": "^1.2.0",
+    "moment": "^2.14.1",
     "s3": "^4.4.0"
   }
 }
