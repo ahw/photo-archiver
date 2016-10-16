@@ -14,6 +14,18 @@ const BUCKET_NAME = 'photos.andrewhallagan'
 const UPLOAD_LIST = 'upload-list.txt'
 let t0 = Date.now()
 
+let MAC_PHOTOS_LIBRARY_FILTER_FUNCTION = function(path) {
+    return /Masters/.test(path)
+        && /jpg/i.test(path)
+        // && /2014\/(02|10)/.test(path)
+        && /2014\/03/.test(path)
+}
+
+let WD_PASSPORT_FILTER_FUNCTION = function(path) {
+    return /png/i.test(path) || /jpg/i.test(path)
+}
+
+
 let SDMINI_FILTER_FUNCTION = function(path) {
     return /jpg/i.test(path)
         && !/Contact Sheet/.test(path)
@@ -60,12 +72,12 @@ let client = s3.createClient({
 
 function walk(dir, filterFn) {
     let results = []
-    filterFn = filterFn || () => false
+    filterFn = filterFn || (() => false)
     let contents = fs.readdirSync(dir)
     contents.map(file => path.join(dir, file)).forEach(path => {
         let stats = fs.statSync(path)
         if (stats.isFile() && filterFn(path)) {
-            // console.log(`Found file ${path}`)
+            console.log(`Found file ${path}`)
             results.push(path)
         } else if (stats.isDirectory()) {
             results = results.concat(walk(path, filterFn))
@@ -87,9 +99,19 @@ function getPreviouslyUploadedIndex() {
 }
 
 let s3startTime = Date.now()
+let previousUploadIndex = getPreviouslyUploadedIndex()
+let numIgnored = 0
+
 function uploadToS3(image, index, total, callback) {
     let parsedPath = path.parse(image)
     let resolvedPath = path.resolve(image)
+
+    if (previousUploadIndex[resolvedPath]) {
+        console.log(`[${index+1}/${total} Ignoring image ${resolvedPath} because it has already been uploaded`)
+        ++numIgnored
+        return callback()
+    }
+
     new ExifImage({ image }, (error, data) => {
         let Key = undefined
 
@@ -101,12 +123,25 @@ function uploadToS3(image, index, total, callback) {
             return callback()
         } else {
             // No error
-            let timestamp = moment(exifDateParser.parse(data.image.ModifyDate))
-            let newPath = timestamp.format("YYYY/MM/DD/") + parsedPath.base
-            Key = `${newPath}`
+            let datetimeOriginal = data.image.DateTimeOriginal
+            console.log(`image.DateTime = ${data.image.DateTime}`)
+            console.log(`image.CreateDate = ${data.image.CreateDate}`)
+            console.log(`image.DateTimeOriginal = ${data.image.DateTimeOriginal}`)
+            console.log(`image.DateTimeDigitized = ${data.image.DateTimeDigitized}`)
+
+            if (datetimeOriginal) {
+                let timestamp = moment(exifDateParser.parse(data.image.DateTimeOriginal))
+                let newPath = timestamp.format("YYYY/MM/DD/") + parsedPath.base
+                Key = `${newPath}`
+            } else {
+                let timestamp = moment(exifDateParser.parse(data.image.DateTimeOriginal))
+                console.log(`Could not parse out DateTimeOriginal in EXIF data. Timestamp would have been ${timestamp}`)
+                return callback()
+            }
+            return callback()
         }
 
-        let rate = (index + 1)/(Date.now() - s3startTime)
+        let rate = (index + 1 - numIgnored)/(Date.now() - s3startTime)
 
         let params = {
           localFile: resolvedPath,
@@ -125,15 +160,15 @@ function uploadToS3(image, index, total, callback) {
             let elapsed = (Date.now() - s3startTime)/60000
             let remaining = ((total - index - 1)/rate)/60000
             // console.log(`Finished uploading image ${index+1}/${total} ${resolvedPath} to S3`)
-            fs.writeFileSync(path.resolve(UPLOAD_LIST), Key + '\n', { flag: 'a' })
+            fs.writeFileSync(path.resolve(UPLOAD_LIST), resolvedPath + '\n', { flag: 'a' })
             console.log(`[${index+1}/${total} ${elapsed.toFixed(2)} mins elapsed, ${remaining.toFixed(2)} remaining] ${resolvedPath} => ${Key}`)
             return callback()
         })
     })
 }
 
-let results = walk(path.resolve(process.argv[2]), SDMINI_FILTER_FUNCTION)
-let seriesFunctions = results.slice(1160+400).map((image, index, results) => {
+let results = walk(path.resolve(process.argv[2]), MAC_PHOTOS_LIBRARY_FILTER_FUNCTION)
+let seriesFunctions = results.map((image, index, results) => {
     return uploadToS3.bind(this, image, index, results.length)
 })
 
