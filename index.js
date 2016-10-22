@@ -1,5 +1,6 @@
+#!/Users/andrew/.nvm/versions/node/v6.5.0/bin/node
 /* eslint-disable no-console */
-let argv = require('yargs');
+const argv = require('yargs').argv;
 const s3 = require('s3');
 const fs = require('fs');
 const path = require('path');
@@ -7,6 +8,8 @@ const async = require('async');
 const moment = require('moment');
 const ExifImage = require('exif').ExifImage;
 const exifDateParser = require('exif-date');
+
+const defaultFilterFunction = require('./filter-functions').defaultFilterFunction;
 
 const accessKeyId = fs.readFileSync(`${__dirname}/access_key_id`).toString().trim();
 const secretAccessKey = fs.readFileSync(`${__dirname}/secret_access_key`).toString().trim();
@@ -88,7 +91,7 @@ const client = s3.createClient({
 });
 
 
-function walk(dir, filterFn = () => false) {
+function walk(dir, filterFn = defaultFilterFunction) {
     let results = [];
     const contents = fs.readdirSync(dir);
     contents.map(file => path.join(dir, file)).forEach((imagePath) => {
@@ -119,6 +122,14 @@ const s3startTime = Date.now();
 const previousUploadIndex = getPreviouslyUploadedIndex();
 let numIgnored = 0;
 
+/**
+ * 
+ * @param image
+ * @param index
+ * @param total
+ * @param callback
+ * @returns {*}
+ */
 function uploadToS3(image, index, total, callback) {
     const parsedPath = path.parse(image);
     const resolvedPath = path.resolve(image);
@@ -184,8 +195,10 @@ function uploadToS3(image, index, total, callback) {
     });
 }
 
-const results = walk(path.resolve(process.argv[2]), MAC_PHOTOS_LIBRARY_FILTER_FUNCTION);
-const seriesFunctions = results
-    .map((image, index, allPaths) => uploadToS3.bind(this, image, index, allPaths.length));
-
-async.series(seriesFunctions, () => console.log(`Done uploading. Total time ${((Date.now() - t0) / 60000).toFixed(2)} minutes.`));
+// const results = walk(path.resolve(argv.dir), MAC_PHOTOS_LIBRARY_FILTER_FUNCTION);
+const results = walk(path.resolve(argv.dir));
+results.forEach(imagePath => console.log(imagePath));
+// const seriesFunctions = results
+//     .map((image, index, allPaths) => uploadToS3.bind(this, image, index, allPaths.length));
+// 
+// async.series(seriesFunctions, () => console.log(`Done uploading. Total time ${((Date.now() - t0) / 60000).toFixed(2)} minutes.`));
