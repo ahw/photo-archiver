@@ -1,0 +1,6 @@
+{
+  "bucket": "photos.my_bucket_name",
+  "accessKeyId": "access_key_id_goes_here",
+  "secretAccessKey": "secret_access_key_goes_here",
+  "region": "us-east-1"
+}

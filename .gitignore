@@ -2,3 +2,4 @@ node_modules
 access_key_id
 secret_access_key
 .idea/
+config/local.json
