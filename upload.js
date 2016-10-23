@@ -1,11 +1,10 @@
 const config = require('config');
 const fs = require('fs');
 const path = require('path');
-const async = require('async');
 const moment = require('moment');
-const client = require('./s3client').createClient();
 const ExifImage = require('exif').ExifImage;
 const exifDateParser = require('exif-date');
+const client = require('./s3client').createClient();
 
 const defaultFilterFunction = require('./filter-functions').defaultFilterFunction;
 /**
@@ -64,22 +63,6 @@ function SDMINI_FILTER_FUNCTION(imagePath) { // eslint-disable-line no-unused-va
         && !/resize/.test(imagePath);
 }
 
-function walk(dir, filterFn = defaultFilterFunction) {
-    let results = [];
-    const contents = fs.readdirSync(dir);
-    contents.map(file => path.join(dir, file)).forEach((imagePath) => {
-        const stats = fs.statSync(imagePath);
-        if (stats.isFile() && filterFn(imagePath)) {
-            console.log(`Found file ${imagePath}`);
-            results.push(imagePath);
-        } else if (stats.isDirectory()) {
-            results = results.concat(walk(imagePath, filterFn));
-        }
-    });
-
-    return results;
-}
-
 function getPreviouslyUploadedIndex() {
     const index = {};
     try {
@@ -93,73 +76,71 @@ function getPreviouslyUploadedIndex() {
 
 /**
  *
- * @param image
+ * @param opts
  * @param index
  * @param total
  * @param callback
  * @returns {*}
  */
-function uploadToS3(image, index, total, callback) {
-    const parsedPath = path.parse(image);
-    const resolvedPath = path.resolve(image);
+function uploadToS3(opts, callback) {
+    const { imagePath, prefix, allowUnknownDates, dryRun } = opts;
+    const log = console.log.bind(console, `[upload${dryRun ? ' DRY RUN' : ''}]`);
+    const parsedPath = path.parse(imagePath);
+    const resolvedPath = path.resolve(imagePath);
 
-    if (previousUploadIndex[resolvedPath]) {
-        console.log(`[${index + 1}/${total} Ignoring image ${resolvedPath} because it has already been uploaded`);
-        numIgnored += 1;
-        return callback();
-    }
+    // if (previousUploadIndex[resolvedPath]) {
+    //     console.log(`[${index + 1}/${total} Ignoring image ${resolvedPath} because it has already been uploaded`);
+    //     numIgnored += 1;
+    //     return callback();
+    // }
 
-    new ExifImage({ image }, (error, data) => { // eslint-disable-line no-new
+    let ex = new ExifImage({ image: resolvedPath }, (error, data) => { // eslint-disable-line no-new
         let Key;
 
         if (error && /No Exif segment found in the given image/i.test(error.message)) {
             Key = `UNKNOWN_DATE/${parsedPath.base}`;
         } else if (error) {
-            console.log(`Ignoring image ${image}. ${error.message}`);
-            // console.error(error)
-            return callback();
+            Key = `UNKNOWN_DATE/${parsedPath.base}`;
         } else {
             // No error
-            const datetimeOriginal = data.image.DateTimeOriginal;
-            console.log(`image.DateTime = ${data.image.DateTime}`);
-            console.log(`image.CreateDate = ${data.image.CreateDate}`);
-            console.log(`image.DateTimeOriginal = ${data.image.DateTimeOriginal}`);
-            console.log(`image.DateTimeDigitized = ${data.image.DateTimeDigitized}`);
+            const datetimeOriginal = data.exif.DateTimeOriginal;
 
             if (datetimeOriginal) {
-                const timestamp = moment(exifDateParser.parse(data.image.DateTimeOriginal));
-                const newPath = timestamp.format('YYYY/MM/DD/') + parsedPath.base;
-                Key = `${newPath}`;
+                const timestamp = moment(exifDateParser.parse(datetimeOriginal));
+                Key = timestamp.format('YYYY/MM/DD/') + parsedPath.base;
             } else {
-                const timestamp = moment(exifDateParser.parse(data.image.DateTimeOriginal));
-                console.log(`Could not parse out DateTimeOriginal in EXIF data. Timestamp would have been ${timestamp}`);
-                return callback();
+                log('Could not parse out DateTimeOriginal EXIF data. Here are the following keys matching "time"');
+                JSON.stringify(data.exif, null, '    ').split('\n').filter(line => /time/i.test(line)).forEach(log);
+                Key = `UNKNOWN_DATE/${parsedPath.base}`;
             }
-            return callback();
         }
 
-        const rate = (index + 1 - numIgnored) / (Date.now() - s3startTime); // eslint-disable-line no-mixed-operators, max-len
+        if (/UNKNOWN_DATE/.test(Key) && !allowUnknownDates) {
+            // If option to uploadUnknownDates was false, return early
+            log(`Not uploading image with unknown EXIF timestamp info ${resolvedPath}`);
+            return callback(new Error(`Could not parse out image date for file ${resolvedPath}`));
+        }
 
         const params = {
             localFile: resolvedPath,
             s3Params: {
-                Bucket: bucket,
-                Key,
+                Bucket: config.get('bucket'),
+                Key: prefix + Key,
                 // other options supported by putObject, except Body and ContentLength.
                 // See: http://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#putObject-property
             },
         };
 
-        const uploader = client.uploadFile(params);
-        uploader.on('error', err => console.error('Upload error!', err.stack));
-        // uploader.on('progress', () => console.log(`progress: ${(100 * uploader.progressAmount/uploader.progressTotal).toFixed(2)}%`, uploader.progressMd5Amount, uploader.progressAmount, uploader.progressTotal))
-        uploader.on('end', () => {
-            const elapsed = (Date.now() - s3startTime) / 60000;
-            const remaining = ((total - index - 1) / rate) / 60000;
-            // console.log(`Finished uploading image ${index+1}/${total} ${resolvedPath} to S3`)
-            fs.writeFileSync(path.resolve(UPLOAD_LIST), `${resolvedPath}\n`, { flag: 'a' });
-            console.log(`[${index + 1}/${total} ${elapsed.toFixed(2)} mins elapsed, ${remaining.toFixed(2)} remaining] ${resolvedPath} => ${Key}`);
+        if (dryRun) {
+            log(`Would have uploaded ${resolvedPath} to s3://${params.s3Params.Bucket}/${params.s3Params.Key}`);
             return callback();
+        }
+
+        const uploader = client.uploadFile(params);
+        uploader.on('error', callback);
+        uploader.on('end', () => {
+            log(`Uploaded ${resolvedPath} to s3://${params.s3Params.Bucket}/${params.s3Params.Key}`);
+            return callback(null, params);
         });
     });
 }
@@ -176,19 +157,65 @@ function uploadToS3(image, index, total, callback) {
 //     async.series(seriesFunctions, () => console.log(`Done uploading. Total time ${((Date.now() - t0) / 60000).toFixed(2)} minutes.`));
 // }
 
+function walk(dir, filterFn = defaultFilterFunction) {
+    let results = [];
+    const contents = fs.readdirSync(dir);
+    contents.map(file => path.join(dir, file)).forEach((imagePath) => {
+        const stats = fs.statSync(imagePath);
+        if (stats.isFile() && filterFn(imagePath)) {
+            // console.log(`Found file ${imagePath}`);
+            results.push(imagePath);
+        } else if (stats.isDirectory()) {
+            results = results.concat(walk(imagePath, filterFn));
+        }
+    });
+
+    return results;
+}
+
+
 exports.command = 'upload';
 exports.describe = 'Recursively upload images in a directory to S3';
 exports.builder = {
     dir: {
         default: '.',
     },
+    prefix: {
+        default: '',
+    },
+    allowUnknownDates: {
+        default: false,
+    },
+    maxCount: {
+        default: Infinity,
+    },
+    dryRun: {
+        default: false,
+    }
 }
 
 exports.handler = function (argv) {
-    console.log('this is the upload handler');
+    console.log(argv.maxCount, argv.prefix, argv.dryRun);
 
-    const UPLOAD_LIST = 'upload-list.txt';
-    const t0 = Date.now();
-    let numIgnored = 0;
+    const imagePaths = walk(argv.dir);
 
-}
+    function loop(i) {
+        uploadToS3({
+            imagePath: imagePaths[i],
+            prefix: argv.prefix,
+            allowUnknownDates: argv.allowUnknownDates,
+            dryRun: argv.dryRun,
+        }, (error, params) => {
+            // const elapsed = (Date.now() - s3startTime) / 60000;
+            // const remaining = ((total - index - 1) / rate) / 60000;
+            // console.log(`Finished uploading image ${index+1}/${total} ${resolvedPath} to S3`)
+            // fs.writeFileSync(path.resolve(UPLOAD_LIST), `${resolvedPath}\n`, { flag: 'a' });
+            // console.log(`[${index + 1}/${total} ${elapsed.toFixed(2)} mins elapsed, ${remaining.toFixed(2)} remaining] ${resolvedPath} => ${Key}`);
+            if (i < imagePaths.length - 1 && i < argv.maxCount) {
+                loop(i + 1);
+            }
+        });
+    }
+
+    loop(0);
+};

@@ -8,7 +8,10 @@ Dependencies
 Usage
 ====
 
-    node index.js "/Users/andrew/Pictures//Photos Library.photoslibrary/Masters"
+    ./index.js upload --dir ~/Desktop
+    ./index.js upload --dir ~/Desktop --max-count 10
+    ./index.js upload --dir "/Users/andrew/Pictures//Photos Library.photoslibrary/Masters" --max-count 10 --prefix test/ --dry-run
+    ./index.js upload --dir "/Users/andrew/Pictures//Photos Library.photoslibrary/Masters" --max-count 10 --dry-run
 
 Better Usage
 ============
